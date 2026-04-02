@@ -1,7 +1,8 @@
 import sys
 import os
 from operator import itemgetter
-from typing import List, Optional, Dict, Any
+from typing import List, Literal, Optional, Dict, Any
+from utils.rag_fusion import RAGFusionRetriever
 
 from langchain_core.messages import BaseMessage
 from langchain_core.output_parsers import StrOutputParser
@@ -14,7 +15,7 @@ from logger import GLOBAL_LOGGER as log
 from prompt.prompt_library import PROMPT_REGISTRY
 from model.models import PromptType
 
-
+RetrieverMode = Literal["similarity", "mmr", "fusion"]
 class ConversationalRAG:
     """
     LCEL-based Conversational RAG with lazy retriever initialization.
@@ -52,12 +53,13 @@ class ConversationalRAG:
     # ---------- Public API ----------
 
     def load_retriever_from_faiss(
-        self,
-        index_path: str,
-        k: int = 5,
-        index_name: str = "index",
-        search_type: str = "similarity",
-        search_kwargs: Optional[Dict[str, Any]] = None,
+    self,
+    index_path: str,
+    k: int = 5,
+    index_name: str = "index",
+    mode: RetrieverMode = "similarity",
+    search_kwargs: Optional[Dict[str, Any]] = None,
+    fusion_kwargs: Optional[Dict[str, Any]] = None,
     ):
         """
         Load FAISS vectorstore from disk and build retriever + LCEL chain.
@@ -74,12 +76,31 @@ class ConversationalRAG:
                 allow_dangerous_deserialization=True,  # ok if you trust the index
             )
 
-            if search_kwargs is None:
-                search_kwargs = {"k": k}
-
-            self.retriever = vectorstore.as_retriever(
-                search_type=search_type, search_kwargs=search_kwargs
-            )
+            if mode == "mmr":
+                _sk = {"k": k, "fetch_k": max(k*4,20), "lambda_mult": 0.5}
+                if search_kwargs: _sk.update(search_kwargs)
+                self.retriever = vectorstore.as_retriever(
+                    search_type="mmr", search_kwargs=_sk)
+                log.info("MMR retriever created", search_kwargs=_sk,
+                         session_id=self.session_id)
+            
+            elif mode == "fusion":
+                _inner = vectorstore.as_retriever(
+                    search_type="similarity",
+                    search_kwargs=search_kwargs or {"k": k})
+                fkw = fusion_kwargs or {}
+                self.retriever = RAGFusionRetriever(
+                    base_retriever=_inner, llm=self.llm,
+                    n_queries=fkw.get("n_queries", 3),
+                    top_k=fkw.get("top_k", k),
+                    rrf_k=fkw.get("rrf_k", 60))
+                log.info("RAG Fusion retriever created", fusion_kwargs=fkw,
+                         session_id=self.session_id)
+            
+            else:
+                self.retriever = vectorstore.as_retriever(
+                    search_type="similarity",
+                    search_kwargs=search_kwargs or {"k": k})
             self._build_lcel_chain()
 
             log.info(
