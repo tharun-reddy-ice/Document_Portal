@@ -6,7 +6,7 @@ import uuid
 import hashlib
 import shutil
 from pathlib import Path
-from typing import Iterable, List, Optional, Dict, Any
+from typing import Iterable, List, Literal, Optional, Dict, Any
 import fitz  # PyMuPDF
 from langchain.schema import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -16,6 +16,7 @@ from logger import GLOBAL_LOGGER as log
 from exception.custom_exception import DocumentPortalException
 from utils.file_io import generate_session_id, save_uploaded_files
 from utils.document_ops import load_documents, concat_for_analysis, concat_for_comparison
+from utils.rag_fusion import RAGFusionRetriever
 
 SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".txt"}
 
@@ -135,12 +136,19 @@ class ChatIngestor:
         log.info("Documents split", chunks=len(chunks), chunk_size=chunk_size, overlap=chunk_overlap)
         return chunks
     
-    def built_retriver( self,
-        uploaded_files: Iterable,
-        *,
-        chunk_size: int = 1000,
-        chunk_overlap: int = 200,
-        k: int = 5,):
+    def built_retriver(
+            self,
+            uploaded_files: Iterable,
+            *,
+            chunk_size: int = 1000,
+            chunk_overlap: int = 200,
+            k: int = 5,
+            retriever_type: Literal["similarity","mmr","fusion"] = "similarity",
+            fetch_k: int = 20,
+            lambda_mult: float = 0.5,
+            n_queries: int = 3,
+            rrf_k: int = 60,
+        ):
         try:
             paths = save_uploaded_files(uploaded_files, self.temp_dir)
             docs = load_documents(paths)
