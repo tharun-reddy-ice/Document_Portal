@@ -171,7 +171,23 @@ class ChatIngestor:
             added = fm.add_documents(chunks)
             log.info("FAISS index updated", added=added, index=str(self.faiss_dir))
             
-            return vs.as_retriever(search_type="similarity", search_kwargs={"k": k})
+            if retriever_type == "mmr":
+                _fk = max(fetch_k, k*2)
+                return vs.as_retriever(
+                    search_type="mmr",
+                    search_kwargs={"k":k,"fetch_k":_fk,"lambda_mult":lambda_mult})
+            
+            elif retriever_type == "fusion":
+                llm = self.model_loader.load_llm()
+                base = vs.as_retriever(
+                    search_type="similarity", search_kwargs={"k": k})
+                return RAGFusionRetriever(
+                    base_retriever=base, llm=llm,
+                    n_queries=n_queries, top_k=k, rrf_k=rrf_k)
+            
+            else:
+                return vs.as_retriever(
+                    search_type="similarity", search_kwargs={"k": k})
             
         except Exception as e:
             log.error("Failed to build retriever", error=str(e))
